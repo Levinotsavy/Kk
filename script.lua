@@ -1,56 +1,32 @@
 
--- ZYIKS RECOLOR V14
--- ALL-IN-ONE | 49 SCOPES | PC / MOBILE / XBOX CONTROLLER
--- Client-side cosmetics
--- Intended for Roblox experiences where you have permission
--- to customize the local gun and its effects.
+-- ZYIKS RECOLOR V15
+-- Mobile / PC / Xbox Controller
+-- 49 scopes + beam detection + diagnostic status
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
+local WS = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-local GuiService = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
-if not player then
-    warn("[ZYIKS] Must run from a client LocalScript")
-    return
-end
+if not player then return end
+local pg = player:WaitForChild("PlayerGui")
 
-local playerGui = player:WaitForChild("PlayerGui")
-
-local env = _G
-pcall(function()
-    if type(getgenv) == "function" then
-        env = getgenv()
-    end
-end)
-
-if type(env.ZyiksRecolorCleanup) == "function" then
-    pcall(env.ZyiksRecolorCleanup)
-end
-
-for _,name in ipairs({
-    "ZyiksRecolorV12",
-    "ZyiksRecolorV13",
-    "ZyiksRecolorV14"
-}) do
-    local old = playerGui:FindFirstChild(name)
-    if old then old:Destroy() end
-end
+local old = pg:FindFirstChild("ZyiksRecolorV15")
+if old then old:Destroy() end
 
 local function C(r,g,b)
     return Color3.fromRGB(r,g,b)
 end
 
-local function S(name,id,a,b,c)
+local function S(n,id,a,b,c)
     return {
-        name=name,
+        name=n,
         id=tostring(id),
         colors={
-            C(a[1],a[2],a[3]),
-            C(b[1],b[2],b[3]),
-            C(c[1],c[2],c[3])
+            C(unpack(a)),
+            C(unpack(b)),
+            C(unpack(c))
         }
     }
 end
@@ -107,24 +83,24 @@ local skins = {
     S("BlackChainsScope",71691975025595,{8,8,11},{169,169,181},{255,255,255})
 }
 
-local running = true
-local selected = nil
-local gunAlpha = 0
+local selected
+local transparency = 0
 local shotUntil = 0
+local shots = 0
+local foundEffects = 0
 local connections = {}
 local originalTextures = {}
-local originalTransparency = {}
-local originalEffects = {}
-local effectConnections = {}
-local watched = {}
+local originalAlpha = {}
+local originalColors = {}
+local running = true
 
-local function bind(signal,callback)
-    local connection = signal:Connect(callback)
-    table.insert(connections,connection)
-    return connection
+local function bind(signal,fn)
+    local c = signal:Connect(fn)
+    connections[#connections+1] = c
+    return c
 end
 
-local function gradient(s)
+local function sequence(s)
     if s.name == "ChromeScope" then
         local colors = {
             C(255,59,117),C(255,179,71),
@@ -134,7 +110,7 @@ local function gradient(s)
         }
         local keys = {}
         for i,color in ipairs(colors) do
-            keys[#keys+1] = ColorSequenceKeypoint.new(
+            keys[i] = ColorSequenceKeypoint.new(
                 (i-1)/(#colors-1),color
             )
         end
@@ -149,14 +125,12 @@ local function gradient(s)
 end
 
 local function isGun(obj)
-    if not obj then return false end
     local n = obj.Name:lower()
-    return n == "gun"
-        or n == "gundisplay"
+    return n == "gun" or n == "gundisplay"
         or n:find("voidscope",1,true) ~= nil
 end
 
-local function getTextureProperty(obj)
+local function textureProperty(obj)
     if obj:IsA("MeshPart") then
         return "TextureID"
     elseif obj:IsA("SpecialMesh") then
@@ -168,223 +142,142 @@ local function getTextureProperty(obj)
     end
 end
 
-local function applyPart(obj)
+local function applyGunObject(obj)
     if obj:IsA("BasePart") then
-        if originalTransparency[obj] == nil then
-            originalTransparency[obj] = obj.LocalTransparencyModifier
+        if originalAlpha[obj] == nil then
+            originalAlpha[obj] =
+                obj.LocalTransparencyModifier
         end
         pcall(function()
-            obj.LocalTransparencyModifier = gunAlpha
+            obj.LocalTransparencyModifier = transparency
         end)
     end
 
     if not selected then return end
 
-    local prop = getTextureProperty(obj)
+    local prop = textureProperty(obj)
     if not prop then return end
 
     pcall(function()
-        local current = obj[prop]
-        if type(current) ~= "string" or current == "" then
-            return
-        end
+        local oldValue = obj[prop]
+        if type(oldValue) ~= "string"
+            or oldValue == "" then return end
 
         if not originalTextures[obj] then
             originalTextures[obj] = {
-                property=prop,
-                value=current
+                property=prop,value=oldValue
             }
         end
 
-        obj[prop] = "rbxassetid://" .. selected.id
+        obj[prop] = "rbxassetid://"..selected.id
     end)
 end
 
-local function processGun(gun)
-    if not gun then return end
-    applyPart(gun)
-    for _,obj in ipairs(gun:GetDescendants()) do
-        applyPart(obj)
-    end
-end
-
 local function scanGuns()
-    if not running then return end
-
     local function scan(container)
         if not container then return end
-        if isGun(container) then
-            processGun(container)
-            return
-        end
         for _,obj in ipairs(container:GetDescendants()) do
             if isGun(obj) then
-                processGun(obj)
+                applyGunObject(obj)
+                for _,child in ipairs(obj:GetDescendants()) do
+                    applyGunObject(child)
+                end
             end
         end
     end
 
     scan(player.Character)
     scan(player:FindFirstChildOfClass("Backpack"))
-
-    local char = player.Character
-    if char then
-        local ref = char:FindFirstChild("DisplayRefGun",true)
-        if ref and ref:IsA("ObjectValue") then
-            scan(ref.Value)
-        end
-    end
 end
 
-local function restoreTextures()
-    for obj,data in pairs(originalTextures) do
-        pcall(function()
-            obj[data.property] = data.value
-        end)
-    end
-    table.clear(originalTextures)
-end
-
-local function restoreTransparency()
-    for obj,value in pairs(originalTransparency) do
-        pcall(function()
-            obj.LocalTransparencyModifier = value
-        end)
-    end
-    table.clear(originalTransparency)
-end
-
-local function restoreEffects()
-    for _,connection in pairs(effectConnections) do
-        pcall(function()
-            connection:Disconnect()
-        end)
-    end
-    table.clear(effectConnections)
-
-    for obj,color in pairs(originalEffects) do
-        pcall(function()
-            obj.Color = color
-        end)
-    end
-    table.clear(originalEffects)
-end
-
-local function isEffect(obj)
+local function effectType(obj)
     return obj:IsA("Beam")
         or obj:IsA("Trail")
         or obj:IsA("ParticleEmitter")
 end
 
-local function effectNearPlayer(obj)
+local function nearPlayer(obj)
     local char = player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local root = char and char:FindFirstChild(
+        "HumanoidRootPart"
+    )
     if not root then return false end
 
-    if obj:IsDescendantOf(char) then return true end
-
-    local part = obj:FindFirstAncestorWhichIsA("BasePart")
-    if part then
-        return (root.Position-part.Position).Magnitude <= 30
+    if obj:IsDescendantOf(char) then
+        return true
     end
 
     if obj:IsA("Beam") then
-        for _,attachment in ipairs({
-            obj.Attachment0,
-            obj.Attachment1
+        for _,a in ipairs({
+            obj.Attachment0,obj.Attachment1
         }) do
-            if attachment and
-                (root.Position-attachment.WorldPosition).Magnitude <= 30 then
+            if a and
+                (a.WorldPosition-root.Position).Magnitude < 80 then
                 return true
             end
         end
+    end
+
+    local parent = obj.Parent
+    while parent do
+        if parent:IsA("Attachment") then
+            return (parent.WorldPosition-root.Position).Magnitude < 80
+        elseif parent:IsA("BasePart") then
+            return (parent.Position-root.Position).Magnitude < 80
+        end
+        parent = parent.Parent
     end
 
     return false
 end
 
 local function recolorEffect(obj)
-    if not selected or not isEffect(obj) then return end
+    if not selected or not effectType(obj) then return end
+    if not nearPlayer(obj) then return end
 
-    local ok,current = pcall(function()
-        return obj.Color
-    end)
-    if not ok then return end
-
-    if originalEffects[obj] == nil then
-        originalEffects[obj] = current
-    end
-
-    local wanted = gradient(selected)
-
-    pcall(function()
-        obj.Color = wanted
-    end)
-
-    if effectConnections[obj] then
-        effectConnections[obj]:Disconnect()
-    end
-
-    local busy = false
-    effectConnections[obj] =
-        obj:GetPropertyChangedSignal("Color"):Connect(function()
-            if busy or not running or not selected then return end
-            busy = true
-            pcall(function()
-                obj.Color = wanted
-            end)
-            busy = false
+    if originalColors[obj] == nil then
+        local ok,value = pcall(function()
+            return obj.Color
         end)
+        if not ok then return end
+        originalColors[obj] = value
+    end
+
+    local ok = pcall(function()
+        obj.Color = sequence(selected)
+    end)
+
+    if ok then
+        foundEffects = foundEffects+1
+    end
 end
 
 local function scanEffects()
-    if not running or not selected then return end
+    if not selected then return end
 
-    local char = player.Character
-    if char then
-        for _,obj in ipairs(char:GetDescendants()) do
-            if isEffect(obj) then
-                recolorEffect(obj)
-            end
-        end
-    end
-
-    for _,obj in ipairs(Workspace:GetDescendants()) do
-        if isEffect(obj) and effectNearPlayer(obj) then
+    for _,obj in ipairs(WS:GetDescendants()) do
+        if effectType(obj) then
             recolorEffect(obj)
         end
     end
 end
 
-local lastShotScan = 0
+local lastShot = 0
 
 local function registerShot()
-    if not running or not selected then return end
+    if not selected then return end
 
-    shotUntil = os.clock()+1
+    local now = os.clock()
+    if now-lastShot < 0.18 then return end
 
-    if os.clock()-lastShotScan >= 0.15 then
-        lastShotScan = os.clock()
-        task.defer(scanEffects)
-    end
+    lastShot = now
+    shotUntil = now+1.5
+    shots = shots+1
+
+    task.defer(scanEffects)
 end
 
-local function chooseSkin(s)
-    restoreTextures()
-    restoreEffects()
-    selected = s
-    scanGuns()
-end
-
-local function setTransparency(value)
-    gunAlpha = math.clamp(value,0,1)
-    scanGuns()
-end
-
--- INPUT: PC, TOUCH, AND XBOX R2
-bind(UIS.InputBegan,function(input,processed)
-    if processed then return end
-
+bind(UIS.InputBegan,function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch
         or input.KeyCode == Enum.KeyCode.ButtonR2 then
@@ -394,513 +287,281 @@ end)
 
 bind(UIS.InputChanged,function(input)
     if input.KeyCode == Enum.KeyCode.ButtonR2
-        and input.Position.Z > 0.15 then
+        and input.Position.Z > 0.35 then
         registerShot()
     end
 end)
 
-bind(Workspace.DescendantAdded,function(obj)
-    if not running or not selected then return end
+bind(WS.DescendantAdded,function(obj)
     if os.clock() > shotUntil then return end
-    if not isEffect(obj) then return end
+    if not effectType(obj) then return end
 
     task.defer(function()
-        if running and selected and effectNearPlayer(obj) then
+        if running and obj.Parent then
             recolorEffect(obj)
         end
     end)
 end)
 
-local function watch(container)
-    if not container or watched[container] then return end
-    watched[container] = true
-
-    bind(container.DescendantAdded,function()
-        task.defer(function()
-            if running then scanGuns() end
+local function restore()
+    for obj,data in pairs(originalTextures) do
+        pcall(function()
+            obj[data.property] = data.value
         end)
-    end)
+    end
+
+    for obj,value in pairs(originalAlpha) do
+        pcall(function()
+            obj.LocalTransparencyModifier = value
+        end)
+    end
+
+    for obj,value in pairs(originalColors) do
+        pcall(function()
+            obj.Color = value
+        end)
+    end
+
+    table.clear(originalTextures)
+    table.clear(originalAlpha)
+    table.clear(originalColors)
 end
 
-watch(player.Character)
-watch(player:FindFirstChildOfClass("Backpack"))
-
-bind(player.CharacterAdded,function(char)
-    watch(char)
-    task.delay(0.5,function()
-        if running then scanGuns() end
-    end)
-end)
-
-bind(player.ChildAdded,function(obj)
-    if obj:IsA("Backpack") then
-        watch(obj)
-    end
-end)
-
--- SAFE UI CREATION
 local function make(class,parent,props)
     local obj = Instance.new(class)
-    for key,value in pairs(props or {}) do
-        local ok,err = pcall(function()
-            obj[key] = value
+    for k,v in pairs(props) do
+        pcall(function()
+            obj[k] = v
         end)
-        if not ok then
-            warn("[ZYIKS UI]",class,key,err)
-        end
     end
     obj.Parent = parent
     return obj
 end
 
-local function round(obj,radius)
+local function round(obj,r)
     make("UICorner",obj,{
-        CornerRadius=UDim.new(0,radius)
+        CornerRadius=UDim.new(0,r)
     })
 end
 
-local function outline(obj,color,width)
-    return make("UIStroke",obj,{
-        Color=color,
-        Thickness=width or 1.5
-    })
-end
-
-local purple = C(165,88,255)
-local white = C(250,245,255)
-local dark = C(19,12,32)
-local buttonColor = C(43,29,66)
-
-local gui = make("ScreenGui",playerGui,{
-    Name="ZyiksRecolorV14",
+local gui = make("ScreenGui",pg,{
+    Name="ZyiksRecolorV15",
     ResetOnSpawn=false,
-    IgnoreGuiInset=true,
     DisplayOrder=100
 })
 
-local orb = make("ImageButton",gui,{
-    Size=UDim2.fromOffset(68,68),
-    Position=UDim2.new(0,20,0.43,0),
-    BackgroundColor3=dark,
-    Image="rbxassetid://93829119988995",
-    BorderSizePixel=0,
-    Selectable=true
-})
-round(orb,34)
-outline(orb,purple,3)
-
-make("TextLabel",orb,{
-    Size=UDim2.new(1,0,0,17),
-    Position=UDim2.new(0,0,1,-17),
-    BackgroundTransparency=1,
+local orb = make("TextButton",gui,{
+    Size=UDim2.fromOffset(65,65),
+    Position=UDim2.new(0,15,0.4,0),
+    BackgroundColor3=C(110,45,180),
     Text="ZYIKS",
-    Font=Enum.Font.GothamBlack,
-    TextSize=11,
-    TextColor3=white
+    TextColor3=C(255,255,255),
+    TextSize=14,
+    Font=Enum.Font.GothamBlack
 })
+round(orb,32)
 
 local panel = make("Frame",gui,{
-    Size=UDim2.fromOffset(350,480),
-    AnchorPoint=Vector2.new(0.5,0.5),
-    Position=UDim2.fromScale(0.5,0.5),
-    BackgroundColor3=dark,
-    BorderSizePixel=0,
-    Visible=false,
-    ClipsDescendants=true
+    Size=UDim2.fromOffset(320,460),
+    Position=UDim2.new(0.5,-160,0.5,-230),
+    BackgroundColor3=C(20,13,32),
+    Visible=false
 })
-round(panel,18)
-outline(panel,purple,3)
+round(panel,14)
 
 local scale = make("UIScale",panel,{Scale=1})
 
-local function fitPanel()
-    local camera = Workspace.CurrentCamera
+local function fit()
+    local camera = WS.CurrentCamera
     if not camera then return end
-
-    local viewport = camera.ViewportSize
-    scale.Scale = math.max(0.4,math.min(
-        1,(viewport.X-24)/350,(viewport.Y-70)/480
-    ))
+    local size = camera.ViewportSize
+    scale.Scale = math.min(
+        1,(size.X-20)/320,(size.Y-60)/460
+    )
 end
 
-fitPanel()
-
-make("ImageLabel",panel,{
-    Size=UDim2.fromScale(1,1),
+local title = make("TextLabel",panel,{
+    Size=UDim2.new(1,-50,0,42),
     BackgroundTransparency=1,
-    Image="rbxassetid://77066684532333",
-    ImageTransparency=0.84,
-    ScaleType=Enum.ScaleType.Crop
-})
-
-local header = make("Frame",panel,{
-    Size=UDim2.new(1,0,0,54),
-    BackgroundColor3=C(43,24,72),
-    BorderSizePixel=0
-})
-round(header,18)
-
-make("TextLabel",header,{
-    Size=UDim2.new(1,-58,1,0),
-    Position=UDim2.fromOffset(12,0),
-    BackgroundTransparency=1,
-    Text="ZYIKS RECOLOR V14",
-    TextColor3=white,
-    TextSize=19,
-    Font=Enum.Font.GothamBlack,
-    TextXAlignment=Enum.TextXAlignment.Left
-})
-
-local close = make("TextButton",header,{
-    Size=UDim2.fromOffset(35,34),
-    Position=UDim2.new(1,-43,0,10),
-    BackgroundColor3=C(100,42,147),
-    Text="X",
+    Text="ZYIKS RECOLOR V15",
+    TextColor3=C(255,255,255),
     TextSize=18,
-    Font=Enum.Font.GothamBlack,
-    TextColor3=white,
-    BorderSizePixel=0,
-    Selectable=true
+    Font=Enum.Font.GothamBlack
 })
-round(close,10)
+
+local close = make("TextButton",panel,{
+    Size=UDim2.fromOffset(35,35),
+    Position=UDim2.new(1,-40,0,4),
+    BackgroundColor3=C(110,45,180),
+    Text="X",
+    TextColor3=C(255,255,255),
+    TextSize=18
+})
+round(close,8)
 
 local search = make("TextBox",panel,{
-    Size=UDim2.new(1,-24,0,38),
-    Position=UDim2.fromOffset(12,65),
-    BackgroundColor3=C(34,24,51),
+    Size=UDim2.new(1,-20,0,36),
+    Position=UDim2.fromOffset(10,48),
+    BackgroundColor3=C(42,29,63),
     Text="",
-    PlaceholderText="Search 49 scopes...",
-    PlaceholderColor3=C(170,150,190),
-    TextColor3=white,
+    PlaceholderText="Search scopes...",
+    TextColor3=C(255,255,255),
     TextSize=14,
-    Font=Enum.Font.GothamBold,
-    ClearTextOnFocus=false,
-    BorderSizePixel=0
+    ClearTextOnFocus=false
 })
-round(search,10)
+round(search,8)
 
-local scrolling = make("ScrollingFrame",panel,{
-    Size=UDim2.new(1,-24,0,255),
-    Position=UDim2.fromOffset(12,112),
+local scroll = make("ScrollingFrame",panel,{
+    Size=UDim2.new(1,-20,0,260),
+    Position=UDim2.fromOffset(10,90),
     BackgroundTransparency=1,
-    BorderSizePixel=0,
     ScrollBarThickness=4,
-    ScrollBarImageColor3=purple,
     CanvasSize=UDim2.fromOffset(0,0),
-    AutomaticCanvasSize=Enum.AutomaticSize.Y,
-    ScrollingDirection=Enum.ScrollingDirection.Y
+    AutomaticCanvasSize=Enum.AutomaticSize.Y
 })
 
-local layout = make("UIListLayout",scrolling,{
-    SortOrder=Enum.SortOrder.LayoutOrder,
-    Padding=UDim.new(0,7)
+make("UIListLayout",scroll,{
+    Padding=UDim.new(0,5),
+    SortOrder=Enum.SortOrder.LayoutOrder
 })
-
-bind(layout:GetPropertyChangedSignal("AbsoluteContentSize"),function()
-    scrolling.CanvasSize = UDim2.fromOffset(
-        0,layout.AbsoluteContentSize.Y+8
-    )
-end)
 
 local status = make("TextLabel",panel,{
-    Size=UDim2.new(1,-24,0,20),
-    Position=UDim2.fromOffset(12,371),
+    Size=UDim2.new(1,-20,0,35),
+    Position=UDim2.fromOffset(10,354),
     BackgroundTransparency=1,
-    Text="Selected: None",
-    TextColor3=white,
+    Text="RT Shots: 0 | Effects: 0",
+    TextColor3=C(210,170,255),
     TextSize=12,
-    Font=Enum.Font.GothamBold,
-    TextXAlignment=Enum.TextXAlignment.Left
+    TextWrapped=true
 })
 
-local alphaText = make("TextLabel",panel,{
-    Size=UDim2.new(1,-24,0,20),
-    Position=UDim2.fromOffset(12,397),
+local alpha = make("TextLabel",panel,{
+    Size=UDim2.new(1,-20,0,22),
+    Position=UDim2.fromOffset(10,391),
     BackgroundTransparency=1,
-    Text="Gun Transparency: 0%",
-    TextColor3=white,
-    TextSize=13,
-    Font=Enum.Font.GothamBold,
-    TextXAlignment=Enum.TextXAlignment.Left
+    Text="Transparency: 0%",
+    TextColor3=C(255,255,255),
+    TextSize=13
 })
 
-local track = make("TextButton",panel,{
-    Size=UDim2.new(1,-36,0,14),
-    Position=UDim2.fromOffset(18,424),
-    BackgroundColor3=C(66,47,91),
-    BorderSizePixel=0,
-    Text="",
-    AutoButtonColor=false,
-    Selectable=true
+local minus = make("TextButton",panel,{
+    Size=UDim2.fromOffset(42,34),
+    Position=UDim2.fromOffset(10,416),
+    BackgroundColor3=C(100,45,160),
+    Text="-",
+    TextSize=24,
+    TextColor3=C(255,255,255)
 })
-round(track,7)
+round(minus,8)
 
-local fill = make("Frame",track,{
-    Size=UDim2.fromScale(0,1),
-    BackgroundColor3=purple,
-    BorderSizePixel=0
+local plus = make("TextButton",panel,{
+    Size=UDim2.fromOffset(42,34),
+    Position=UDim2.new(1,-52,0,416),
+    BackgroundColor3=C(100,45,160),
+    Text="+",
+    TextSize=24,
+    TextColor3=C(255,255,255)
 })
-round(fill,7)
-
-local knob = make("Frame",track,{
-    Size=UDim2.fromOffset(20,20),
-    AnchorPoint=Vector2.new(0.5,0.5),
-    Position=UDim2.fromScale(0,0.5),
-    BackgroundColor3=white,
-    BorderSizePixel=0
-})
-round(knob,10)
-
-local function setSlider(value)
-    value = math.clamp(value,0,1)
-    fill.Size = UDim2.fromScale(value,1)
-    knob.Position = UDim2.fromScale(value,0.5)
-    alphaText.Text = "Gun Transparency: "
-        ..math.floor(value*100+0.5).."%"
-    setTransparency(value)
-end
-
-local sliding = false
-local slideInput = nil
-
-local function updateSlider(input)
-    local width = track.AbsoluteSize.X
-    if width <= 0 then return end
-
-    setSlider(
-        (input.Position.X-track.AbsolutePosition.X)/width
-    )
-end
-
-bind(track.InputBegan,function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        sliding = true
-        slideInput = input
-        updateSlider(input)
-    end
-end)
-
-bind(UIS.InputChanged,function(input)
-    if not sliding then return end
-
-    if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input == slideInput then
-        updateSlider(input)
-    end
-end)
-
-bind(UIS.InputEnded,function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input == slideInput then
-        sliding = false
-        slideInput = nil
-    end
-end)
+round(plus,8)
 
 local reset = make("TextButton",panel,{
-    Size=UDim2.new(1,-24,0,30),
-    Position=UDim2.fromOffset(12,445),
-    BackgroundColor3=C(91,37,135),
-    BorderSizePixel=0,
-    Text="RESET GUN + TEXTURE + BEAM",
-    TextColor3=white,
-    TextSize=12,
-    Font=Enum.Font.GothamBlack,
-    Selectable=true
+    Size=UDim2.new(1,-116,0,34),
+    Position=UDim2.fromOffset(58,416),
+    BackgroundColor3=C(75,35,120),
+    Text="RESET",
+    TextSize=14,
+    TextColor3=C(255,255,255)
 })
-round(reset,9)
+round(reset,8)
 
 local buttons = {}
-local firstButton = nil
 
-for index,s in ipairs(skins) do
-    local b = make("TextButton",scrolling,{
-        Name="Scope_"..index,
-        Size=UDim2.new(1,-6,0,48),
-        BackgroundColor3=buttonColor,
-        BorderSizePixel=0,
-        Text="",
-        LayoutOrder=index,
+for i,s in ipairs(skins) do
+    local b = make("TextButton",scroll,{
+        Size=UDim2.new(1,-6,0,42),
+        BackgroundColor3=C(45,30,70),
+        Text=s.name,
+        TextColor3=C(255,255,255),
+        TextSize=13,
+        Font=Enum.Font.GothamBold,
+        LayoutOrder=i,
         Selectable=true
     })
-    round(b,11)
-
-    if not firstButton then firstButton = b end
-
-    local border = outline(b,C(92,62,132),1.5)
-
-    local nameLabel = make("TextLabel",b,{
-        Size=UDim2.new(1,-82,1,0),
-        Position=UDim2.fromOffset(11,0),
-        BackgroundTransparency=1,
-        Text=s.name,
-        TextColor3=white,
-        TextSize=14,
-        TextScaled=true,
-        Font=Enum.Font.GothamBold,
-        TextXAlignment=Enum.TextXAlignment.Left
-    })
-
-    make("UITextSizeConstraint",nameLabel,{
-        MinTextSize=10,
-        MaxTextSize=14
-    })
-
-    local swatch = make("Frame",b,{
-        Size=UDim2.fromOffset(56,20),
-        Position=UDim2.new(1,-68,0.5,-10),
-        BackgroundColor3=white,
-        BorderSizePixel=0
-    })
-    round(swatch,7)
-
-    make("UIGradient",swatch,{
-        Color=gradient(s)
-    })
-
-    buttons[s] = {
-        button=b,
-        border=border
-    }
+    round(b,8)
+    buttons[s] = b
 
     bind(b.Activated,function()
-        if not running then return end
+        restore()
+        selected = s
+        scanGuns()
+        scanEffects()
 
-        chooseSkin(s)
-        status.Text = "Selected: "..s.name
-
-        for item,entry in pairs(buttons) do
-            local active = item == s
-            entry.button.BackgroundColor3 =
-                active and C(94,43,153) or buttonColor
-            entry.border.Color =
-                active and C(213,172,255)
-                or C(92,62,132)
+        for item,button in pairs(buttons) do
+            button.BackgroundColor3 =
+                item == s and C(125,55,190)
+                or C(45,30,70)
         end
     end)
 end
 
 bind(search:GetPropertyChangedSignal("Text"),function()
-    local query = search.Text:lower()
-
-    for s,entry in pairs(buttons) do
-        entry.button.Visible =
-            query == ""
-            or s.name:lower():find(query,1,true) ~= nil
+    local q = search.Text:lower()
+    for s,b in pairs(buttons) do
+        b.Visible = q == ""
+            or s.name:lower():find(q,1,true) ~= nil
     end
+end)
+
+local function updateAlpha(amount)
+    transparency = math.clamp(
+        transparency+amount,0,1
+    )
+    alpha.Text = "Transparency: "..
+        math.floor(transparency*100+0.5).."%"
+    scanGuns()
+end
+
+bind(minus.Activated,function()
+    updateAlpha(-0.05)
+end)
+
+bind(plus.Activated,function()
+    updateAlpha(0.05)
 end)
 
 bind(reset.Activated,function()
+    restore()
     selected = nil
-    restoreTextures()
-    restoreEffects()
-    restoreTransparency()
-    setSlider(0)
-    status.Text = "Selected: None"
-
-    for _,entry in pairs(buttons) do
-        entry.button.BackgroundColor3 = buttonColor
-        entry.border.Color = C(92,62,132)
+    transparency = 0
+    alpha.Text = "Transparency: 0%"
+    for _,b in pairs(buttons) do
+        b.BackgroundColor3 = C(45,30,70)
     end
 end)
 
-local function setPanel(open)
-    panel.Visible = open
-    if open then
-        fitPanel()
-        if UIS.GamepadEnabled and firstButton then
-            GuiService.SelectedObject = firstButton
-        end
-    else
-        if GuiService.SelectedObject
-            and GuiService.SelectedObject:IsDescendantOf(panel) then
-            GuiService.SelectedObject = nil
-        end
-    end
+local function toggle()
+    panel.Visible = not panel.Visible
+    if panel.Visible then fit() end
 end
 
-bind(close.Activated,function()
-    setPanel(false)
-end)
+bind(orb.Activated,toggle)
+bind(close.Activated,toggle)
 
 bind(UIS.InputBegan,function(input,processed)
+    if processed then return end
+
     if input.KeyCode == Enum.KeyCode.ButtonY then
-        if not processed then
-            setPanel(not panel.Visible)
-        end
+        toggle()
     elseif panel.Visible then
         if input.KeyCode == Enum.KeyCode.ButtonB then
-            setPanel(false)
+            toggle()
         elseif input.KeyCode == Enum.KeyCode.ButtonL1 then
-            setSlider(gunAlpha-0.05)
+            updateAlpha(-0.05)
         elseif input.KeyCode == Enum.KeyCode.ButtonR1 then
-            setSlider(gunAlpha+0.05)
+            updateAlpha(0.05)
         end
     end
 end)
-
--- DRAG SUPPORT
-local function drag(target,handle,onTap)
-    local active = false
-    local startPosition
-    local startPointer
-    local moved = false
-    local touchInput = nil
-
-    bind(handle.InputBegan,function(input)
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1
-            and input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-
-        active = true
-        moved = false
-        touchInput = input
-        startPointer = input.Position
-        startPosition = target.Position
-    end)
-
-    bind(UIS.InputChanged,function(input)
-        if not active then return end
-
-        if input.UserInputType ~= Enum.UserInputType.MouseMovement
-            and input ~= touchInput then
-            return
-        end
-
-        local delta = input.Position-startPointer
-        if delta.Magnitude > 8 then
-            moved = true
-        end
-
-        target.Position = UDim2.new(
-            startPosition.X.Scale,
-            startPosition.X.Offset+delta.X,
-            startPosition.Y.Scale,
-            startPosition.Y.Offset+delta.Y
-        )
-    end)
-
-    bind(UIS.InputEnded,function(input)
-        if not active then return end
-
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input == touchInput then
-            active = false
-            touchInput = nil
-            if onTap and not moved then
-                onTap()
-            end
-        end
-    end)
-end
-
-drag(orb,orb,function()
-    setPanel(not panel.Visible)
-end)
-
-drag(panel,header)
 
 local elapsed = 0
 
@@ -908,33 +569,17 @@ bind(RunService.Heartbeat,function(dt)
     if not running then return end
 
     elapsed = elapsed+dt
-    if elapsed < 0.6 then return end
+    if elapsed < 0.5 then return end
     elapsed = 0
 
-    if selected or gunAlpha > 0 then
+    if selected then
         scanGuns()
     end
+
+    status.Text = string.format(
+        "RT Shots: %d | Effects: %d",
+        shots,foundEffects
+    )
 end)
 
-local function cleanup()
-    if not running then return end
-    running = false
-
-    restoreTextures()
-    restoreEffects()
-    restoreTransparency()
-
-    for _,connection in ipairs(connections) do
-        pcall(function()
-            connection:Disconnect()
-        end)
-    end
-
-    gui:Destroy()
-end
-
-env.ZyiksRecolorCleanup = cleanup
-
-print("[ZYIKS V14] Loaded "..#skins.." scopes")
-print("[ZYIKS V14] Controller support initialized")
-Cr
+print("[ZYIKS V15] Loaded "..#skins.." scopes")
